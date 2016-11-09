@@ -43,8 +43,25 @@ class VanillaRNN(object):
         self.why = np.random.randn(self.vocab_size, num_hidden_units) * 0.01
 
         #  Initialize bias
-        self.bh = np.random.randn(num_hidden_units, 1)
-        self.by = np.random.randn(vocab_size, 1)
+        self.bh = np.zeros(num_hidden_units, 1)
+        self.by = np.zeros(vocab_size, 1)
+
+    def sample(self, h, seed_ix, n):
+        ''' Sample the sequence of outputs'''
+
+        x = np.zeros((self.vocab_size, 1))
+        x[seed_ix] = 1
+        ixes = []
+        for t in range(n):
+            h = np.tanh(np.dot(self.Wxh, x) + np.dot(self.whh, h) + self.bh)
+            y = np.dot(self.why, h) + self.by
+            p = np.exp(y) / np.log(np.exp(y))
+            ix = np.random.choice(range(self.vocab_size), p=p.ravel())
+            x = np.zeros((self.vocab_size, 1))
+            x[ix] = 1
+            ixes.append(ix)
+
+        return ixes
 
     def forward_backward(self, X, T, h_prev):
         '''forward pass'''
@@ -58,7 +75,7 @@ class VanillaRNN(object):
             #  RNN forward pass equations
             h[t] = np.tanh(np.dot(self.wxh, x_one_hot[t]) + np.dot(self.whh, h[t - 1]) + self.bh)
             y_pred[t] = np.dot(self.why, h[t]) + self.by
-            prob[t] = np.exp(y_pred[t]) / np.sum(y_pred[t])
+            prob[t] = np.exp(y_pred[t]) / np.sum(np.exp(y_pred[t]))
             loss += -np.log(prob[t][T[t], 0])
 
         #  backward pass
@@ -68,14 +85,14 @@ class VanillaRNN(object):
         for t in reversed(range(len(X))):
             dy = np.copy(prob[t])
             dy[T[t]] -= 1
-            dwhy = np.dot(h[t], dy.T)
-            dby += dby
+            dwhy += np.dot(dy, h[t].T)
+            dby += dy
 
             dh = np.dot(self.why.T, dy) + dhnext
             dhraw = (1 - h(t) * h[t]) * dh
             dbh += dhraw
-            dwxh = np.dot(dhraw, x_one_hot[t].T)
-            dwhh = np.dot(dhraw, h[t - 1].T)
+            dwxh += np.dot(dhraw, x_one_hot[t].T)
+            dwhh += np.dot(dhraw, h[t - 1].T)
             dhnext = np.dot(self.whh.T, dhraw)
 
         for dparam in [dwxh, dwhh, dwhy, dbh, dby]:
@@ -92,28 +109,35 @@ class VanillaRNN(object):
         mbh, mby = np.zeros_like(self.bh), np.zeros_like(self.by)  # memory variables for Adagrad
         smooth_loss = -np.log(1.0 / self.vocab_size) * self.seq_len  # loss at iteration 0
 
-        if ptr + self.seq_len >= self.data_len or sample_n is 0:
-            h_prev = np.zeros((self.num_hidden_params, 1))
-            ptr = 0
+        while True:
+            if ptr + self.seq_len >= self.data_len or sample_n is 0:
+                h_prev = np.zeros((self.num_hidden_params, 1))
+                ptr = 0
 
-        inputs = [self.char_to_index[ch] for ch in self.data[ptr: ptr + self.seq_len]]
-        targets = [self.char_to_index[ch] for ch in self.data[ptr + 1: ptr + 1 + self.seq_len]]
-        loss, dwxh, dwhh, dwhy, dbh, dby, hprev = self.forward_backward(inputs, targets, h_prev)
-        smooth_loss = smooth_loss * 0.999 + loss * 0.001
+            inputs = [self.char_to_index[ch] for ch in self.data[ptr: ptr + self.seq_len]]
+            targets = [self.char_to_index[ch] for ch in self.data[ptr + 1: ptr + 1 + self.seq_len]]
+            if sample_n % 100 is 0:
+                sample_ix = self.sample(h_prev, inputs[0], 200)
+                txt = ''.join(self.index_to_char[ix] for ix in sample_ix)
+                print('\n {} \n'.format(txt))
 
-        if sample_n % 100 is 0:
+            loss, dwxh, dwhh, dwhy, dbh, dby, hprev = self.forward_backward(inputs, targets, h_prev)
+            smooth_loss = smooth_loss * 0.999 + loss * 0.001
+
             print('Iteration {}, loss = {}'.format(sample_n, smooth_loss))
 
-        for param, dparam, mem in zip([self.wxh, self.whh, self.why, self.bh, self.by],
-                                      [dwxh, dwhh, dwhy, dbh, dby],
-                                      [mwxh, mwhh, mwhy, mbh, mby]):
-            mem = mem + dparam * dparam
-            param = param - (self.lr * dparam) / np.sqrt(mem + 1e-8)
+            for param, dparam, mem in zip([self.wxh, self.whh, self.why, self.bh, self.by],
+                                          [dwxh, dwhh, dwhy, dbh, dby],
+                                          [mwxh, mwhh, mwhy, mbh, mby]):
+                mem = mem + dparam * dparam
+                param = param - (self.lr * dparam) / np.sqrt(mem + 1e-8)
 
-        ptr = ptr + self.seq_len
-        sample_n = sample_n + 1
+            ptr = ptr + self.seq_len
+            sample_n = sample_n + 1
 
 
 if __name__ == '__main__':
     objRNN = VanillaRNN('input.txt')
     objRNN.train()
+
+
