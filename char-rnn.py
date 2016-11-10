@@ -1,11 +1,10 @@
 #  !/usr/bin
-#  PEP8
 #  Toy example of seq2seq modeling using vanilla RNN
 #  h(t) = tanh(Wxh*x(t) + Whh*h(t-1) + bxh + bhh)
 #  y(t) = Wyh*h(t) + byh
 #  x(t) is n dimensional embedding for one hot vector for vocabulary of length n
-
 import numpy as np
+from random import uniform
 
 
 class VanillaRNN(object):
@@ -27,9 +26,10 @@ class VanillaRNN(object):
 
         self.data = data
         self.data_len = len(data)
+        self.lr = lr
+
         chars = list(set(data))  # list of unique characters
         vocab_size = len(chars)
-        self.lr = lr
 
         #  Characters to index and vice versa
         self.char_to_index = {c: i for i, c in enumerate(chars)}
@@ -43,8 +43,8 @@ class VanillaRNN(object):
         self.why = np.random.randn(self.vocab_size, num_hidden_units) * 0.01
 
         #  Initialize bias
-        self.bh = np.zeros(num_hidden_units, 1)
-        self.by = np.zeros(vocab_size, 1)
+        self.bh = np.zeros((num_hidden_units, 1))
+        self.by = np.zeros((vocab_size, 1))
 
     def sample(self, h, seed_ix, n):
         ''' Sample the sequence of outputs'''
@@ -53,9 +53,9 @@ class VanillaRNN(object):
         x[seed_ix] = 1
         ixes = []
         for t in range(n):
-            h = np.tanh(np.dot(self.Wxh, x) + np.dot(self.whh, h) + self.bh)
+            h = np.tanh(np.dot(self.wxh, x) + np.dot(self.whh, h) + self.bh)
             y = np.dot(self.why, h) + self.by
-            p = np.exp(y) / np.log(np.exp(y))
+            p = np.exp(y) / np.sum(np.exp(y))
             ix = np.random.choice(range(self.vocab_size), p=p.ravel())
             x = np.zeros((self.vocab_size, 1))
             x[ix] = 1
@@ -89,7 +89,7 @@ class VanillaRNN(object):
             dby += dy
 
             dh = np.dot(self.why.T, dy) + dhnext
-            dhraw = (1 - h(t) * h[t]) * dh
+            dhraw = (1 - h[t] * h[t]) * dh
             dbh += dhraw
             dwxh += np.dot(dhraw, x_one_hot[t].T)
             dwhh += np.dot(dhraw, h[t - 1].T)
@@ -99,6 +99,30 @@ class VanillaRNN(object):
             np.clip(dparam, -5, 5, out=dparam)
 
         return loss, dwxh, dwhh, dwhy, dbh, dby, h[len(X) - 1]
+
+    #  gradient checking
+    def gradCheck(self, inputs, targets, hprev):
+        num_checks, delta = 10, 1e-5
+        _, dWxh, dWhh, dWhy, dbh, dby, _ = self.forward_backward(inputs, targets, hprev)
+        for param, dparam, name in zip([self.wxh, self.whh, self.why, self.bh, self.by], [dWxh, dWhh, dWhy, dbh, dby], ['Wxh', 'Whh', 'Why', 'bh', 'by']):
+            s0 = dparam.shape
+            s1 = param.shape
+            assert s0 == s1
+            print name
+            for i in xrange(num_checks):
+                ri = int(uniform(0, param.size))
+                # evaluate cost at [x + delta] and [x - delta]
+                old_val = param.flat[ri]
+                param.flat[ri] = old_val + delta
+                cg0, _, _, _, _, _, _ = self.forward_backward(inputs, targets, hprev)
+                param.flat[ri] = old_val - delta
+                cg1, _, _, _, _, _, _ = self.forward_backward(inputs, targets, hprev)
+                param.flat[ri] = old_val  # reset old value for this parameter
+                # fetch both numerical and analytic gradient
+                grad_analytic = dparam.flat[ri]
+                grad_numerical = (cg0 - cg1) / (2 * delta)
+                rel_error = abs(grad_analytic - grad_numerical) / abs(grad_numerical + grad_analytic)
+                print '%f, %f => %e ' % (grad_numerical, grad_analytic, rel_error)
 
     def train(self):
         ''' Training the RNN'''
@@ -116,7 +140,8 @@ class VanillaRNN(object):
 
             inputs = [self.char_to_index[ch] for ch in self.data[ptr: ptr + self.seq_len]]
             targets = [self.char_to_index[ch] for ch in self.data[ptr + 1: ptr + 1 + self.seq_len]]
-            if sample_n % 100 is 0:
+            # self.gradCheck(inputs, targets, h_prev)
+            if sample_n % 100 == 0:
                 sample_ix = self.sample(h_prev, inputs[0], 200)
                 txt = ''.join(self.index_to_char[ix] for ix in sample_ix)
                 print('\n {} \n'.format(txt))
@@ -124,13 +149,14 @@ class VanillaRNN(object):
             loss, dwxh, dwhh, dwhy, dbh, dby, hprev = self.forward_backward(inputs, targets, h_prev)
             smooth_loss = smooth_loss * 0.999 + loss * 0.001
 
-            print('Iteration {}, loss = {}'.format(sample_n, smooth_loss))
+            if sample_n % 100 is 0:
+                print('Iteration {}, loss = {}'.format(sample_n, smooth_loss))
 
             for param, dparam, mem in zip([self.wxh, self.whh, self.why, self.bh, self.by],
                                           [dwxh, dwhh, dwhy, dbh, dby],
                                           [mwxh, mwhh, mwhy, mbh, mby]):
                 mem = mem + dparam * dparam
-                param = param - (self.lr * dparam) / np.sqrt(mem + 1e-8)
+                param = param - self.lr * dparam / np.sqrt(mem + 1e-8)
 
             ptr = ptr + self.seq_len
             sample_n = sample_n + 1
@@ -139,5 +165,3 @@ class VanillaRNN(object):
 if __name__ == '__main__':
     objRNN = VanillaRNN('input.txt')
     objRNN.train()
-
-
