@@ -37,6 +37,7 @@ class VanillaRNN(object):
         self.vocab_size = vocab_size
         self.num_hidden_params = num_hidden_units
 
+        np.random.seed(42)
         #  Initialize weights of RNN, with normal distribution with sigma = 0.01
         self.wxh = np.random.randn(num_hidden_units, vocab_size) * 0.01
         self.whh = np.random.randn(num_hidden_units, num_hidden_units) * 0.01
@@ -152,11 +153,24 @@ class VanillaRNN(object):
             if sample_n % 100 is 0:
                 print('Iteration {}, loss = {}'.format(sample_n, smooth_loss))
 
-            for param, dparam, mem in zip([self.wxh, self.whh, self.why, self.bh, self.by],
-                                          [dwxh, dwhh, dwhy, dbh, dby],
-                                          [mwxh, mwhh, mwhy, mbh, mby]):
-                mem = mem + dparam * dparam
-                param = param - self.lr * dparam / np.sqrt(mem + 1e-8)
+            mwxh += dwxh * dwxh
+            self.wxh += -self.lr * dwxh / np.sqrt(mwxh + 1e-8)
+
+            mwhh += dwhh * dwhh
+            self.whh += -self.lr * dwhh / np.sqrt(mwhh + 1e-8)
+
+            mwhy += dwhy * dwhy
+            self.why += -self.lr * dwhy / np.sqrt(mwhy + 1e-8)
+
+            mbh += dbh * dbh
+            self.bh += -self.lr * dbh / np.sqrt(mbh + 1e-8)
+
+            mby += dby * dby
+            self.by += -self.lr * dby / np.sqrt(mby + 1e-8)
+
+            # for param, dparam, mem in zip([self.wxh, self.whh, self.why, self.bh, self.by], # [dwxh, dwhh, dwhy, dbh, dby], # [mwxh, mwhh, mwhy, mbh, mby]):
+            # mem = mem + dparam * dparam
+            # param = param - self.lr * dparam / np.sqrt(mem + 1e-8)
 
             ptr = ptr + self.seq_len
             sample_n = sample_n + 1
