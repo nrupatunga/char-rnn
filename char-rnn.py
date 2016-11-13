@@ -168,10 +168,6 @@ class VanillaRNN(object):
             mby += dby * dby
             self.by += -self.lr * dby / np.sqrt(mby + 1e-8)
 
-            # for param, dparam, mem in zip([self.wxh, self.whh, self.why, self.bh, self.by], # [dwxh, dwhh, dwhy, dbh, dby], # [mwxh, mwhh, mwhy, mbh, mby]):
-            # mem = mem + dparam * dparam
-            # param = param - self.lr * dparam / np.sqrt(mem + 1e-8)
-
             ptr = ptr + self.seq_len
             sample_n = sample_n + 1
 
