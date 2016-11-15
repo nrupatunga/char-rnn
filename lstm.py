@@ -24,7 +24,7 @@
 # Xs(t) = [x(t) h(t-1)]
 # ----------------------------------------------------------------------
 import numpy as np
-import pdb
+# import pdb
 
 initial_seed = 42
 
@@ -60,11 +60,12 @@ class LSTM_state:
         self.s = np.zeros(num_mem_cells)
         self.h = np.zeros(num_mem_cells)
         self.y = np.zeros(output_dim)
+        self.prob = np.zeros(output_dim)
 
 
 class LSTM_data:
 
-    def process_data(self, input_txt_file):
+    def __init__(self, input_txt_file):
         ''' Process the input data
         @params:
         --------
@@ -85,6 +86,10 @@ class LSTM_data:
         self.vocab_size = vocab_size
         self.data = data
         self.data_len = len(data)
+        self.seq_len = 25
+        ptr = 0
+        self.inputs = [self.char_to_index[ch] for ch in self.data[ptr: ptr + self.seq_len]]
+        self.targets = [self.char_to_index[ch] for ch in self.data[ptr + 1: ptr + 1 + self.seq_len]]
 
 
 class LSTM_param:
@@ -102,7 +107,7 @@ class LSTM_param:
         self.wi = self.random_array(mu, sigma, num_mem_cells, concat_dim)
         self.wf = self.random_array(mu, sigma, num_mem_cells, concat_dim)
         self.wo = self.random_array(mu, sigma, num_mem_cells, concat_dim)
-        self.wy = self.random_array(mu, sigma, num_mem_cells, output_dim)
+        self.wy = self.random_array(mu, sigma, output_dim, num_mem_cells)
 
         # Bias initialization
         self.bg = self.random_array(mu, sigma, num_mem_cells)
@@ -179,6 +184,8 @@ class LSTM_Node:
         self.state.s = self.state.g * self.state.i + s_prev * self.state.f
         self.state.h = self.state.s * self.state.o
         self.state.y = np.dot(self.param.wy, self.state.h) + self.param.by
+        pred = self.state.y
+        self.state.prob = np.exp(pred) / np.sum(np.exp(pred))
 
         # store the inputs
         self.x = x
@@ -197,12 +204,75 @@ class LSTM_network:
         self.input_xs = []
         # Node list
         self.lstm_node_list = []
+        self.loss = 0
 
-    def add_output(self, y, loss):
-        assert len(y) == len(self.input_xs)
-        pass
+    def feed_backward(self, target):
+        ''' Backpropogation '''
 
-    def add_input(self, input_x):
+        assert len(self.lstm_node_list) == len(target)
+
+        dh_next = np.zeros_like(self.lstm_node_list[0].state.h)
+        ds_next = np.zeros_like(self.lstm_node_list[0].state.s)
+
+        for i, tt in reversed(list(enumerate(target))):
+            param = self.lstm_node_list[i].param
+            state = self.lstm_node_list[i].state
+            x_dim = param.input_dim
+            xc = self.lstm_node_list[i].xc
+
+            dy = np.copy(self.lstm_node_list[i].state.prob)
+            dy[tt] -= 1
+
+            # gradient till cell state at time t
+            dh = np.dot(dy, param.wy) + dh_next
+            ds = dh * state.o + ds_next
+
+            # gradients till the non linearities for gates
+            dg = state.i * ds
+            di = state.g * ds
+            df = self.lstm_node_list[i].s_prev * ds
+            do = np.dot(dy, param.wy) * state.s
+
+            # gradients including non-linearities
+            dg_input = (1.0 - state.g ** 2) * dg
+            di_input = (1.0 - state.i) * state.i * di
+            df_input = (1.0 - state.f) * state.f * df
+            do_input = (1.0 - state.o) * state.o * do
+
+            # Update gradients
+            self.lstm_node_list[i].param.dwy += np.dot(dy, state.h.T)
+            self.lstm_node_list[i].param.dby += dy
+            self.lstm_node_list[i].param.dwg += np.outer(dg_input, xc)
+            self.lstm_node_list[i].param.dwi += np.outer(di_input, xc)
+            self.lstm_node_list[i].param.dwf += np.outer(df_input, xc)
+            self.lstm_node_list[i].param.dwo += np.outer(do_input, xc)
+            self.lstm_node_list[i].param.dbg += dg_input
+            self.lstm_node_list[i].param.dbi += di_input
+            self.lstm_node_list[i].param.dbf += df_input
+            self.lstm_node_list[i].param.dbo += do_input
+
+            ds_next = state.f * ds
+            # compute bottom diff
+            dxc = np.zeros_like(xc)
+            dxc += np.dot(self.param.wi.T, di_input)
+            dxc += np.dot(self.param.wf.T, df_input)
+            dxc += np.dot(self.param.wo.T, do_input)
+            dxc += np.dot(self.param.wg.T, dg_input)
+            dh_next = dxc[x_dim:]
+
+    def calculate_loss(self, target):
+        ''' Cross entropy loss'''
+
+        assert len(self.lstm_node_list) == len(target)
+
+        loss = 0
+        for i, tt in enumerate(target):
+            prob = self.lstm_node_list[i].state.prob
+            loss += -np.log(prob[tt])
+
+        self.loss = loss
+
+    def feed_forward(self, input_x):
         '''Storing input sequence, add new state everytime there is a new input
         @params:
         --------
@@ -225,14 +295,20 @@ class LSTM_network:
 
 if __name__ == '__main__':
     np.random.seed(initial_seed)
-    pdb.set_trace()
-    input_dim, output_dim, num_iters, num_samples = 50, 50, 100, 5
+
+    objLstmData = LSTM_data('./input.txt')
+    input_dim, output_dim, num_iters, num_samples = objLstmData.vocab_size, objLstmData.vocab_size, 100, objLstmData.seq_len
     objLstmNet = LSTM_network(input_dim, output_dim)
 
-    x_list = [np.random.random(input_dim) for _ in range(num_samples)]
-    y_list = x_list[1:]
+    x_list = objLstmData.inputs
+    y_list = objLstmData.targets
 
     for i in range(num_iters):
         print('Current Iter = {}'.format(i))
-        for i in range(num_samples - 1):
-            objLstmNet.add_input(x_list[i])
+        for i in range(num_samples):
+            x_one_hot = np.zeros((output_dim))
+            x_one_hot[x_list[i]] = 1
+            objLstmNet.feed_forward(x_one_hot)
+
+        objLstmNet.calculate_loss(y_list)
+        objLstmNet.feed_backward(y_list)
