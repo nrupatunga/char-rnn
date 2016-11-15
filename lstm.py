@@ -1,15 +1,56 @@
-# This is the implemenation of basic LSTM
+# ----------------------------------------------------------------------
+# This is the implemenation of single layer LSTM
+# ----------
+# Equations:
+# ----------
+#   g(t) = tanh(Wgx * x(t), Wgh * h(t - 1) + bg)
+#   i(t) = tanh(Wix * x(t), Wih * h(t - 1) + bg) ---> input Gate
+#   f(t) = tanh(Wfx * x(t), Wfh * h(t - 1) + bg) ---> forget Gate
+#   o(t) = tanh(Wox * x(t), Woh * h(t - 1) + bg) ---> output Gate
+#   S(t) = g(t) .* i(t) + f(t) .* S(t - 1)  ---> update Cell State s(t)
+#   h(t) = S(t) .* o(t) ---> update hidden state
+#
+# ---------
+# Notation:
+# ---------
+#    * : dot product
+#   .* : hadamard product
+#
+# In implementation we concatenate the weights as below
+# Wg = [Wgx Wgh]
+# Wi = [Wix Wih]
+# Wf = [Wfx Wfh]
+# Wo = [Wox Woh]
+# Xs(t) = [x(t) h(t-1)]
+# ----------------------------------------------------------------------
 import numpy as np
+import pdb
+
+initial_seed = 42
 
 
 def sigmoid(x):
     return 1. / (1 + np.exp(-x))
 
 
+class loss_layer:
+    '''
+    Computes squared loss
+    '''
+
+    def loss(self, pred, label):
+        return (pred[0] - label) ** 2
+
+    def loss_grad(self, pred, label):
+        dL = np.zeros_like(pred)
+        dL[0] = 2 * (pred[0] - label)
+        return dL
+
+
 class LSTM_state:
     ''' Class holding all the states of LSTM unit '''
 
-    def __init__(self, input_dim, num_mem_cells):
+    def __init__(self, input_dim, output_dim, num_mem_cells):
         '''At time t=0 initialize the states to zeros'''
 
         self.g = np.zeros(num_mem_cells)
@@ -18,6 +59,7 @@ class LSTM_state:
         self.o = np.zeros(num_mem_cells)
         self.s = np.zeros(num_mem_cells)
         self.h = np.zeros(num_mem_cells)
+        self.y = np.zeros(output_dim)
 
 
 class LSTM_data:
@@ -49,10 +91,10 @@ class LSTM_param:
     ''' Class holding all the LSTM learnable weights and biases of LSTM unit'''
 
     def random_array(self, mu, sigma, *shape_args):
-        np.random.seed(0)
+        np.random.seed(initial_seed)
         return np.random.rand(*shape_args) * sigma + mu
 
-    def init_param(self, num_mem_cells, concat_dim, mu=-0.1, sigma=0.2):
+    def init_param(self, num_mem_cells, output_dim, concat_dim, mu=-0.1, sigma=0.2):
         '''initialize the weights'''
 
         # Weight initialization
@@ -60,26 +102,30 @@ class LSTM_param:
         self.wi = self.random_array(mu, sigma, num_mem_cells, concat_dim)
         self.wf = self.random_array(mu, sigma, num_mem_cells, concat_dim)
         self.wo = self.random_array(mu, sigma, num_mem_cells, concat_dim)
+        self.wy = self.random_array(mu, sigma, num_mem_cells, output_dim)
 
         # Bias initialization
         self.bg = self.random_array(mu, sigma, num_mem_cells)
         self.bi = self.random_array(mu, sigma, num_mem_cells)
         self.bf = self.random_array(mu, sigma, num_mem_cells)
         self.bo = self.random_array(mu, sigma, num_mem_cells)
+        self.by = self.random_array(mu, sigma, output_dim)
 
         # weight gradient initialization
         self.dwg = np.zeros_like(self.wg)
         self.dwi = np.zeros_like(self.wi)
         self.dwf = np.zeros_like(self.wf)
         self.dwo = np.zeros_like(self.wo)
+        self.dwy = np.zeros_like(self.wy)
 
         # bias gradient initialization
         self.dbg = np.zeros_like(self.bg)
         self.dbi = np.zeros_like(self.bi)
         self.dbf = np.zeros_like(self.bf)
         self.dbo = np.zeros_like(self.bo)
+        self.dby = np.zeros_like(self.by)
 
-    def __init__(self, input_dim, num_mem_cells=100, lr=0.1):
+    def __init__(self, input_dim, output_dim, num_mem_cells=100, lr=0.1):
         ''' Initialize weights, bias,  character indexing
         @params:
         --------
@@ -91,10 +137,11 @@ class LSTM_param:
         self.lr = lr
         self.num_mem_cells = num_mem_cells
         self.input_dim = input_dim
+        self.output_dim = output_dim
         self.concat_dim = input_dim + num_mem_cells
 
         # Init parameters
-        self.init_param(num_mem_cells, self.concat_dim)
+        self.init_param(num_mem_cells, output_dim, self.concat_dim)
 
 
 class LSTM_Node:
@@ -108,6 +155,7 @@ class LSTM_Node:
         self.x = None
         # non-recurrent input concatenated with recurrent input
         self.xc = None
+        self.y = None
 
     def forward_pass(self, x, s_prev=None, h_prev=None):
         ''' LSTM forward pass'''
@@ -130,29 +178,39 @@ class LSTM_Node:
         self.state.o = sigmoid(np.dot(self.param.wo, xc) + self.param.bo)
         self.state.s = self.state.g * self.state.i + s_prev * self.state.f
         self.state.h = self.state.s * self.state.o
+        self.state.y = np.dot(self.param.wy, self.state.h) + self.param.by
 
         # store the inputs
         self.x = x
         self.xc = xc
+        self.y = self.state.y
 
 
 class LSTM_network:
 
-    def __init__(self, input_dim, num_mem_cells=100, learning_rate=0.1):
+    def __init__(self, input_dim, output_dim, num_mem_cells=100, learning_rate=0.1):
         '''Initialize the LSTM unit, LSTM state'''
 
         # weights and bias are reused, so initialize lstm_param only once
-        self.lstm_param = LSTM_param(input_dim, num_mem_cells, learning_rate)
+        self.lstm_param = LSTM_param(input_dim, output_dim, num_mem_cells, learning_rate)
         # input sequence
         self.input_xs = []
         # Node list
         self.lstm_node_list = []
 
-    def add_lstm(self, input_x):
-        '''Storing input sequence, add new state everytime there is a new input'''
+    def add_output(self, y, loss):
+        assert len(y) == len(self.input_xs)
+        pass
+
+    def add_input(self, input_x):
+        '''Storing input sequence, add new state everytime there is a new input
+        @params:
+        --------
+            input_x - input vector to LSTM, x(t)
+        '''
 
         self.input_xs.append(input_x)
-        lstm_state = LSTM_state(self.lstm_param.num_mem_cells, self.lstm_param.input_dim)
+        lstm_state = LSTM_state(self.lstm_param.input_dim, self.lstm_param.output_dim, self.lstm_param.num_mem_cells)
         self.lstm_node_list.append(LSTM_Node(self.lstm_param, lstm_state))
 
         idx = len(self.input_xs) - 1
@@ -166,4 +224,15 @@ class LSTM_network:
 
 
 if __name__ == '__main__':
-    pass
+    np.random.seed(initial_seed)
+    pdb.set_trace()
+    input_dim, output_dim, num_iters, num_samples = 50, 50, 100, 5
+    objLstmNet = LSTM_network(input_dim, output_dim)
+
+    x_list = [np.random.random(input_dim) for _ in range(num_samples)]
+    y_list = x_list[1:]
+
+    for i in range(num_iters):
+        print('Current Iter = {}'.format(i))
+        for i in range(num_samples - 1):
+            objLstmNet.add_input(x_list[i])
