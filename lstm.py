@@ -24,7 +24,7 @@
 # Xs(t) = [x(t) h(t-1)]
 # ----------------------------------------------------------------------
 import numpy as np
-# import pdb
+import pdb
 
 initial_seed = 42
 
@@ -224,14 +224,14 @@ class LSTM_network:
             dy[tt] -= 1
 
             # gradient till cell state at time t
-            dh = np.dot(dy, param.wy) + dh_next
+            dh = np.dot(param.wy.T, dy) + dh_next
             ds = dh * state.o + ds_next
 
             # gradients till the non linearities for gates
             dg = state.i * ds
             di = state.g * ds
             df = self.lstm_node_list[i].s_prev * ds
-            do = np.dot(dy, param.wy) * state.s
+            do = dh * state.s
 
             # gradients including non-linearities
             dg_input = (1.0 - state.g ** 2) * dg
@@ -240,7 +240,7 @@ class LSTM_network:
             do_input = (1.0 - state.o) * state.o * do
 
             # Update gradients
-            self.lstm_node_list[i].param.dwy += np.dot(dy, state.h.T)
+            self.lstm_node_list[i].param.dwy += np.outer(dy, state.h)
             self.lstm_node_list[i].param.dby += dy
             self.lstm_node_list[i].param.dwg += np.outer(dg_input, xc)
             self.lstm_node_list[i].param.dwi += np.outer(di_input, xc)
@@ -254,10 +254,10 @@ class LSTM_network:
             ds_next = state.f * ds
             # compute bottom diff
             dxc = np.zeros_like(xc)
-            dxc += np.dot(self.param.wi.T, di_input)
-            dxc += np.dot(self.param.wf.T, df_input)
-            dxc += np.dot(self.param.wo.T, do_input)
-            dxc += np.dot(self.param.wg.T, dg_input)
+            dxc += np.dot(param.wi.T, di_input)
+            dxc += np.dot(param.wf.T, df_input)
+            dxc += np.dot(param.wo.T, do_input)
+            dxc += np.dot(param.wg.T, dg_input)
             dh_next = dxc[x_dim:]
 
     def calculate_loss(self, target):
@@ -303,12 +303,10 @@ if __name__ == '__main__':
     x_list = objLstmData.inputs
     y_list = objLstmData.targets
 
-    for i in range(num_iters):
-        print('Current Iter = {}'.format(i))
-        for i in range(num_samples):
-            x_one_hot = np.zeros((output_dim))
-            x_one_hot[x_list[i]] = 1
-            objLstmNet.feed_forward(x_one_hot)
+    for i in range(num_samples):
+        x_one_hot = np.zeros((output_dim))
+        x_one_hot[x_list[i]] = 1
+        objLstmNet.feed_forward(x_one_hot)
 
-        objLstmNet.calculate_loss(y_list)
-        objLstmNet.feed_backward(y_list)
+    objLstmNet.calculate_loss(y_list)
+    objLstmNet.feed_backward(y_list)
