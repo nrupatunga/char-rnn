@@ -1,5 +1,4 @@
-# ----------------------------------------------------------------------
-# This is the implemenation of single layer LSTM
+# This is the implementation of single layer LSTM
 # ----------
 # Equations:
 # ----------
@@ -50,7 +49,69 @@ class LSTM_state:
         self.prob = np.zeros(output_dim)
 
 
-class LSTM_data:
+class LSTM:
+
+    def __init__(self, input_txt_file):
+        ''' Process the input data, prepare for training
+        @params:
+        --------
+            input_txt_file - text file input containing the test characters
+        '''
+
+        data = []
+        with open(input_txt_file, 'r') as f:
+            data = f.read()
+
+        chars = list(set(data))  # list of unique characters
+        vocab_size = len(chars)
+
+        #  Characters to index and vice versa
+        self.char_to_index = {c: i for i, c in enumerate(chars)}
+        self.index_to_char = {i: c for i, c in enumerate(chars)}
+
+        self.vocab_size = vocab_size
+        self.data = data
+        self.data_len = len(data)
+        self.seq_len = 25
+        self.objLstmNet = LSTM_network(self.vocab_size, self.vocab_size, self.seq_len)
+
+    def train(self):
+        ''' Training the LSTM'''
+
+        ptr, sample_n = 0, 0
+        objLstmNet = self.objLstmNet
+
+        while True:
+            if ptr + self.seq_len >= self.data_len or sample_n is 0:
+                h_prev = np.zeros((self.objLstmNet.num_mem_cells))
+                s_prev = np.zeros((self.objLstmNet.num_mem_cells))
+                ptr = 0
+
+            inputs = [self.char_to_index[ch] for ch in self.data[ptr: ptr + self.seq_len]]
+            targets = [self.char_to_index[ch] for ch in self.data[ptr + 1: ptr + 1 + self.seq_len]]
+            x_list, y_list = inputs, targets
+            num_samples = len(inputs)
+
+            for i in range(num_samples):
+                x_one_hot = np.zeros((self.vocab_size))
+                x_one_hot[x_list[i]] = 1
+                objLstmNet.feed_forward(x_one_hot, s_prev, h_prev)
+                s_prev = objLstmNet.s_prev
+                h_prev = objLstmNet.h_prev
+
+            objLstmNet.calculate_loss(y_list)
+            objLstmNet.feed_backward(y_list)
+            objLstmNet.apply_grad()
+            objLstmNet.reset()
+
+            # if sample_n % 100 is 0:
+            print('Iteration {}, loss = {}'.format(sample_n, self.objLstmNet.smooth_loss))
+
+            ptr = ptr + self.seq_len
+            sample_n = sample_n + 1
+
+
+class LSTM_grad_data:
 
     def __init__(self, input_txt_file):
         ''' Process the input data
@@ -117,6 +178,57 @@ class LSTM_param:
         self.dbo = np.zeros_like(self.bo)
         self.dby = np.zeros_like(self.by)
 
+        # memory variables for adagrad
+        self.mwg = np.zeros_like(self.wg)
+        self.mwi = np.zeros_like(self.wi)
+        self.mwf = np.zeros_like(self.wf)
+        self.mwo = np.zeros_like(self.wo)
+        self.mwy = np.zeros_like(self.wy)
+
+        self.mbg = np.zeros_like(self.bg)
+        self.mbi = np.zeros_like(self.bi)
+        self.mbf = np.zeros_like(self.bf)
+        self.mbo = np.zeros_like(self.bo)
+        self.mby = np.zeros_like(self.by)
+
+    def apply_grad(self, loss, smooth_loss):
+        smooth_loss = smooth_loss * 0.999 + loss * 0.001
+        dwg = self.dwg
+        dwi = self.dwi
+        dwf = self.dwf
+        dwo = self.dwo
+        dwy = self.dwy
+
+        dbg = self.dbg
+        dbi = self.dbi
+        dbf = self.dbf
+        dbo = self.dbo
+        dby = self.dby
+
+        self.mwg += dwg * dwg
+        self.mwi += dwi * dwi
+        self.mwf += dwf * dwf
+        self.mwo += dwo * dwo
+        self.mwy += dwy * dwy
+        self.wg += -self.lr * dwg / np.sqrt(self.mwg + 1e-8)
+        self.wi += -self.lr * dwi / np.sqrt(self.mwi + 1e-8)
+        self.wf += -self.lr * dwf / np.sqrt(self.mwf + 1e-8)
+        self.wo += -self.lr * dwo / np.sqrt(self.mwo + 1e-8)
+        self.wy += -self.lr * dwy / np.sqrt(self.mwy + 1e-8)
+
+        self.mbg += dbg * dbg
+        self.mbi += dbi * dbi
+        self.mbf += dbf * dbf
+        self.mbo += dbo * dbo
+        self.mby += dby * dby
+        self.bg += -self.lr * dbg / np.sqrt(self.mbg + 1e-8)
+        self.bi += -self.lr * dbi / np.sqrt(self.mbi + 1e-8)
+        self.bf += -self.lr * dbf / np.sqrt(self.mbf + 1e-8)
+        self.bo += -self.lr * dbo / np.sqrt(self.mbo + 1e-8)
+        self.by += -self.lr * dby / np.sqrt(self.mby + 1e-8)
+
+        return smooth_loss
+
     def __init__(self, input_dim, output_dim, num_mem_cells=100, lr=0.1):
         ''' Initialize weights, bias,  character indexing
         @params:
@@ -172,6 +284,7 @@ class LSTM_Node:
         self.state.h = self.state.s * self.state.o
         self.state.y = np.dot(self.param.wy, self.state.h) + self.param.by
         pred = self.state.y
+        pdb.set_trace()
         self.state.prob = np.exp(pred) / np.sum(np.exp(pred))
 
         # store the inputs
@@ -182,16 +295,24 @@ class LSTM_Node:
 
 class LSTM_network:
 
-    def __init__(self, input_dim, output_dim, num_mem_cells=100, learning_rate=0.1):
+    def __init__(self, input_dim, output_dim, seq_len, num_mem_cells=100, learning_rate=0.1):
         '''Initialize the LSTM unit, LSTM state'''
 
         # weights and bias are reused, so initialize lstm_param only once
         self.lstm_param = LSTM_param(input_dim, output_dim, num_mem_cells, learning_rate)
         # input sequence
         self.input_xs = []
+        self.seq_len = seq_len
         # Node list
         self.lstm_node_list = []
         self.loss = 0
+        self.num_mem_cells = num_mem_cells
+        # loss
+        self.smooth_loss = -np.log(1.0 / output_dim) * self.seq_len  # loss at iteration 0
+
+    def apply_grad(self):
+        # update your weights
+        self.smooth_loss = self.lstm_param.apply_grad(self.loss, self.smooth_loss)
 
     def feed_backward(self, target):
         ''' Backpropogation '''
@@ -202,7 +323,7 @@ class LSTM_network:
         ds_next = np.zeros_like(self.lstm_node_list[0].state.s)
 
         for i, tt in reversed(list(enumerate(target))):
-            print('Param Address: {}, State Address: {}'.format(id(self.lstm_node_list[i].param), id(self.lstm_node_list[i].state)))
+            # print('Param Address: {}, State Address: {}'.format(id(self.lstm_node_list[i].param), id(self.lstm_node_list[i].state)))
             param = self.lstm_node_list[i].param
             state = self.lstm_node_list[i].state
             x_dim = param.input_dim
@@ -261,7 +382,7 @@ class LSTM_network:
 
         self.loss = loss
 
-    def feed_forward(self, input_x):
+    def feed_forward(self, input_x, s_prev=None, h_prev=None):
         '''Storing input sequence, add new state everytime there is a new input
         @params:
         --------
@@ -273,22 +394,24 @@ class LSTM_network:
         self.lstm_node_list.append(LSTM_Node(self.lstm_param, lstm_state))
 
         idx = len(self.input_xs) - 1
+        self.lstm_node_list[idx].forward_pass(input_x, s_prev, h_prev)
+        self.s_prev = self.lstm_node_list[idx].state.s
+        self.h_prev = self.lstm_node_list[idx].state.h
 
-        if idx is 0:
-            self.lstm_node_list[idx].forward_pass(input_x)
-        else:
-            s_prev = self.lstm_node_list[idx - 1].state.s
-            h_prev = self.lstm_node_list[idx - 1].state.h
-            self.lstm_node_list[idx].forward_pass(input_x, s_prev, h_prev)
+    def reset(self):
+        self.input_xs = []
+        self.lstm_node_list = []
 
 
 def gradient_check():
     np.random.seed(initial_seed)
-    objLstmData = LSTM_data('./input.txt')
+    objLstmData = LSTM_grad_data('./input.txt')
     input_dim, output_dim, num_iters, num_samples = objLstmData.vocab_size, objLstmData.vocab_size, 100, objLstmData.seq_len
-    objLstmNet = LSTM_network(input_dim, output_dim)
-    objLstmNetOne = LSTM_network(input_dim, output_dim)
-    objLstmNetTwo = LSTM_network(input_dim, output_dim)
+    objLstmNet = LSTM_network(input_dim, output_dim, objLstmData.seq_len)
+    objLstmNetOne = LSTM_network(input_dim, output_dim, objLstmData.seq_len)
+    objLstmNetTwo = LSTM_network(input_dim, output_dim, objLstmData.seq_len)
+    objLstmNetOne.lstm_param = objLstmNet.lstm_param
+    objLstmNetTwo.lstm_param = objLstmNet.lstm_param
 
     x_list = objLstmData.inputs
     y_list = objLstmData.targets
@@ -329,7 +452,7 @@ def gradient_check():
     dbo = objLstmNet.lstm_node_list[0].param.dbo
     dby = objLstmNet.lstm_node_list[0].param.dby
 
-    num_checks, delta = 10, 1e-5
+    num_checks, delta, eps = 5, 1e-5, 1e-20
     for param, dparam, name in zip([wg, wi, wf, wo, wy, bg, bi, bf, bo, by], [dwg, dwi, dwf, dwo, dwy, dbg, dbi, dbf, dbo, dby], ['wg', 'wi', 'wf', 'wo', 'wy', 'bg', 'bi', 'bf', 'bo', 'by']):
         assert param.shape == dparam.shape, 'Error: Dimensions dont match'
         print name
@@ -339,7 +462,6 @@ def gradient_check():
             old_val = param.flat[ri]
 
             # Feed one with +delta
-            pdb.set_trace()
             param.flat[ri] = old_val + delta
             for j in range(num_samples):
                 x_one_hot = np.zeros((output_dim))
@@ -348,7 +470,7 @@ def gradient_check():
 
             objLstmNetOne.calculate_loss(y_list)
             loss_one = objLstmNetOne.loss
-            pdb.set_trace()
+            objLstmNetOne.reset()
 
             # Feed one with -delta
             param.flat[ri] = old_val - delta
@@ -359,35 +481,21 @@ def gradient_check():
 
             objLstmNetTwo.calculate_loss(y_list)
             loss_two = objLstmNetTwo.loss
-            pdb.set_trace()
+            objLstmNetTwo.reset()
             param.flat[ri] = old_val
 
             grad_analytical = dparam.flat[ri]
             grad_numerical = (loss_one - loss_two) / (2.0 * delta)
-            error = abs(grad_analytical - grad_numerical) / abs(grad_analytical + grad_numerical)
+            error = abs(grad_analytical - grad_numerical) / abs(grad_analytical + grad_numerical + eps)
             print '%f, %f => %e ' % (grad_numerical, grad_analytical, error)
 
 
 def test():
     np.random.seed(initial_seed)
-
-    objLstmData = LSTM_data('./input.txt')
-    input_dim, output_dim, num_iters, num_samples = objLstmData.vocab_size, objLstmData.vocab_size, 100, objLstmData.seq_len
-    objLstmNet = LSTM_network(input_dim, output_dim)
-
-    x_list = objLstmData.inputs
-    y_list = objLstmData.targets
-
-    # pdb.set_trace()
-    for i in range(num_samples):
-        x_one_hot = np.zeros((output_dim))
-        x_one_hot[x_list[i]] = 1
-        objLstmNet.feed_forward(x_one_hot)
-
-    objLstmNet.calculate_loss(y_list)
-    objLstmNet.feed_backward(y_list)
+    objLstm = LSTM('./input.txt')
+    objLstm.train()
 
 
 if __name__ == '__main__':
-    # test()
-    gradient_check()
+    test()
+    # gradient_check()
