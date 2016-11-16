@@ -4,9 +4,9 @@
 # Equations:
 # ----------
 #   g(t) = tanh(Wgx * x(t), Wgh * h(t - 1) + bg)
-#   i(t) = tanh(Wix * x(t), Wih * h(t - 1) + bg) ---> input Gate
-#   f(t) = tanh(Wfx * x(t), Wfh * h(t - 1) + bg) ---> forget Gate
-#   o(t) = tanh(Wox * x(t), Woh * h(t - 1) + bg) ---> output Gate
+#   i(t) = sigmoid(Wix * x(t), Wih * h(t - 1) + bg) ---> input Gate
+#   f(t) = sigmoid(Wfx * x(t), Wfh * h(t - 1) + bg) ---> forget Gate
+#   o(t) = sigmoid(Wox * x(t), Woh * h(t - 1) + bg) ---> output Gate
 #   S(t) = g(t) .* i(t) + f(t) .* S(t - 1)  ---> update Cell State s(t)
 #   h(t) = S(t) .* o(t) ---> update hidden state
 #
@@ -25,26 +25,13 @@
 # ----------------------------------------------------------------------
 import numpy as np
 import pdb
+from random import uniform
 
 initial_seed = 42
 
 
 def sigmoid(x):
     return 1. / (1 + np.exp(-x))
-
-
-class loss_layer:
-    '''
-    Computes squared loss
-    '''
-
-    def loss(self, pred, label):
-        return (pred[0] - label) ** 2
-
-    def loss_grad(self, pred, label):
-        dL = np.zeros_like(pred)
-        dL[0] = 2 * (pred[0] - label)
-        return dL
 
 
 class LSTM_state:
@@ -215,6 +202,7 @@ class LSTM_network:
         ds_next = np.zeros_like(self.lstm_node_list[0].state.s)
 
         for i, tt in reversed(list(enumerate(target))):
+            print('Param Address: {}, State Address: {}'.format(id(self.lstm_node_list[i].param), id(self.lstm_node_list[i].state)))
             param = self.lstm_node_list[i].param
             state = self.lstm_node_list[i].state
             x_dim = param.input_dim
@@ -240,16 +228,17 @@ class LSTM_network:
             do_input = (1.0 - state.o) * state.o * do
 
             # Update gradients
-            self.lstm_node_list[i].param.dwy += np.outer(dy, state.h)
-            self.lstm_node_list[i].param.dby += dy
-            self.lstm_node_list[i].param.dwg += np.outer(dg_input, xc)
-            self.lstm_node_list[i].param.dwi += np.outer(di_input, xc)
-            self.lstm_node_list[i].param.dwf += np.outer(df_input, xc)
-            self.lstm_node_list[i].param.dwo += np.outer(do_input, xc)
-            self.lstm_node_list[i].param.dbg += dg_input
-            self.lstm_node_list[i].param.dbi += di_input
-            self.lstm_node_list[i].param.dbf += df_input
-            self.lstm_node_list[i].param.dbo += do_input
+            idx = 0
+            self.lstm_node_list[idx].param.dwy += np.outer(dy, state.h)
+            self.lstm_node_list[idx].param.dby += dy
+            self.lstm_node_list[idx].param.dwg += np.outer(dg_input, xc)
+            self.lstm_node_list[idx].param.dwi += np.outer(di_input, xc)
+            self.lstm_node_list[idx].param.dwf += np.outer(df_input, xc)
+            self.lstm_node_list[idx].param.dwo += np.outer(do_input, xc)
+            self.lstm_node_list[idx].param.dbg += dg_input
+            self.lstm_node_list[idx].param.dbi += di_input
+            self.lstm_node_list[idx].param.dbf += df_input
+            self.lstm_node_list[idx].param.dbo += do_input
 
             ds_next = state.f * ds
             # compute bottom diff
@@ -293,12 +282,13 @@ class LSTM_network:
             self.lstm_node_list[idx].forward_pass(input_x, s_prev, h_prev)
 
 
-if __name__ == '__main__':
+def gradient_check():
     np.random.seed(initial_seed)
-
     objLstmData = LSTM_data('./input.txt')
     input_dim, output_dim, num_iters, num_samples = objLstmData.vocab_size, objLstmData.vocab_size, 100, objLstmData.seq_len
     objLstmNet = LSTM_network(input_dim, output_dim)
+    objLstmNetOne = LSTM_network(input_dim, output_dim)
+    objLstmNetTwo = LSTM_network(input_dim, output_dim)
 
     x_list = objLstmData.inputs
     y_list = objLstmData.targets
@@ -310,3 +300,94 @@ if __name__ == '__main__':
 
     objLstmNet.calculate_loss(y_list)
     objLstmNet.feed_backward(y_list)
+
+    # Weights
+    wg = objLstmNet.lstm_node_list[0].param.wg
+    wi = objLstmNet.lstm_node_list[0].param.wi
+    wf = objLstmNet.lstm_node_list[0].param.wf
+    wo = objLstmNet.lstm_node_list[0].param.wo
+    wy = objLstmNet.lstm_node_list[0].param.wy
+
+    # Bias
+    bg = objLstmNet.lstm_node_list[0].param.bg
+    bi = objLstmNet.lstm_node_list[0].param.bi
+    bf = objLstmNet.lstm_node_list[0].param.bf
+    bo = objLstmNet.lstm_node_list[0].param.bo
+    by = objLstmNet.lstm_node_list[0].param.by
+
+    # Weights
+    dwg = objLstmNet.lstm_node_list[0].param.dwg
+    dwi = objLstmNet.lstm_node_list[0].param.dwi
+    dwf = objLstmNet.lstm_node_list[0].param.dwf
+    dwo = objLstmNet.lstm_node_list[0].param.dwo
+    dwy = objLstmNet.lstm_node_list[0].param.dwy
+
+    # Bias
+    dbg = objLstmNet.lstm_node_list[0].param.dbg
+    dbi = objLstmNet.lstm_node_list[0].param.dbi
+    dbf = objLstmNet.lstm_node_list[0].param.dbf
+    dbo = objLstmNet.lstm_node_list[0].param.dbo
+    dby = objLstmNet.lstm_node_list[0].param.dby
+
+    num_checks, delta = 10, 1e-5
+    for param, dparam, name in zip([wg, wi, wf, wo, wy, bg, bi, bf, bo, by], [dwg, dwi, dwf, dwo, dwy, dbg, dbi, dbf, dbo, dby], ['wg', 'wi', 'wf', 'wo', 'wy', 'bg', 'bi', 'bf', 'bo', 'by']):
+        assert param.shape == dparam.shape, 'Error: Dimensions dont match'
+        print name
+
+        for i in xrange(num_checks):
+            ri = int(uniform(0, param.size))
+            old_val = param.flat[ri]
+
+            # Feed one with +delta
+            pdb.set_trace()
+            param.flat[ri] = old_val + delta
+            for j in range(num_samples):
+                x_one_hot = np.zeros((output_dim))
+                x_one_hot[x_list[j]] = 1
+                objLstmNetOne.feed_forward(x_one_hot)
+
+            objLstmNetOne.calculate_loss(y_list)
+            loss_one = objLstmNetOne.loss
+            pdb.set_trace()
+
+            # Feed one with -delta
+            param.flat[ri] = old_val - delta
+            for j in range(num_samples):
+                x_one_hot = np.zeros((output_dim))
+                x_one_hot[x_list[j]] = 1
+                objLstmNetTwo.feed_forward(x_one_hot)
+
+            objLstmNetTwo.calculate_loss(y_list)
+            loss_two = objLstmNetTwo.loss
+            pdb.set_trace()
+            param.flat[ri] = old_val
+
+            grad_analytical = dparam.flat[ri]
+            grad_numerical = (loss_one - loss_two) / (2.0 * delta)
+            error = abs(grad_analytical - grad_numerical) / abs(grad_analytical + grad_numerical)
+            print '%f, %f => %e ' % (grad_numerical, grad_analytical, error)
+
+
+def test():
+    np.random.seed(initial_seed)
+
+    objLstmData = LSTM_data('./input.txt')
+    input_dim, output_dim, num_iters, num_samples = objLstmData.vocab_size, objLstmData.vocab_size, 100, objLstmData.seq_len
+    objLstmNet = LSTM_network(input_dim, output_dim)
+
+    x_list = objLstmData.inputs
+    y_list = objLstmData.targets
+
+    # pdb.set_trace()
+    for i in range(num_samples):
+        x_one_hot = np.zeros((output_dim))
+        x_one_hot[x_list[i]] = 1
+        objLstmNet.feed_forward(x_one_hot)
+
+    objLstmNet.calculate_loss(y_list)
+    objLstmNet.feed_backward(y_list)
+
+
+if __name__ == '__main__':
+    # test()
+    gradient_check()
