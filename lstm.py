@@ -92,20 +92,24 @@ class LSTM:
             x_list, y_list = inputs, targets
             num_samples = len(inputs)
 
+            # pdb.set_trace()
             for i in range(num_samples):
                 x_one_hot = np.zeros((self.vocab_size))
                 x_one_hot[x_list[i]] = 1
+                if sample_n == 35:
+                    pdb.set_trace()
                 objLstmNet.feed_forward(x_one_hot, s_prev, h_prev)
                 s_prev = objLstmNet.s_prev
                 h_prev = objLstmNet.h_prev
 
+            # pdb.set_trace()
             objLstmNet.calculate_loss(y_list)
             objLstmNet.feed_backward(y_list)
             objLstmNet.apply_grad()
             objLstmNet.reset()
 
             # if sample_n % 100 is 0:
-            print('Iteration {}, loss = {}'.format(sample_n, self.objLstmNet.smooth_loss))
+            print('Iteration {}, loss = {}'.format(sample_n, self.objLstmNet.loss))
 
             ptr = ptr + self.seq_len
             sample_n = sample_n + 1
@@ -145,9 +149,9 @@ class LSTM_param:
 
     def random_array(self, mu, sigma, *shape_args):
         np.random.seed(initial_seed)
-        return np.random.rand(*shape_args) * sigma + mu
+        return np.random.randn(*shape_args) * sigma + mu
 
-    def init_param(self, num_mem_cells, output_dim, concat_dim, mu=-0.1, sigma=0.2):
+    def init_param(self, num_mem_cells, output_dim, concat_dim, mu=0, sigma=0.01):
         '''initialize the weights'''
 
         # Weight initialization
@@ -158,11 +162,11 @@ class LSTM_param:
         self.wy = self.random_array(mu, sigma, output_dim, num_mem_cells)
 
         # Bias initialization
-        self.bg = self.random_array(mu, sigma, num_mem_cells)
-        self.bi = self.random_array(mu, sigma, num_mem_cells)
-        self.bf = self.random_array(mu, sigma, num_mem_cells)
-        self.bo = self.random_array(mu, sigma, num_mem_cells)
-        self.by = self.random_array(mu, sigma, output_dim)
+        self.bg = np.zeros(num_mem_cells)
+        self.bi = np.zeros(num_mem_cells)
+        self.bf = np.zeros(num_mem_cells)
+        self.bo = np.zeros(num_mem_cells)
+        self.by = np.zeros(output_dim)
 
         # weight gradient initialization
         self.dwg = np.zeros_like(self.wg)
@@ -284,7 +288,6 @@ class LSTM_Node:
         self.state.h = self.state.s * self.state.o
         self.state.y = np.dot(self.param.wy, self.state.h) + self.param.by
         pred = self.state.y
-        pdb.set_trace()
         self.state.prob = np.exp(pred) / np.sum(np.exp(pred))
 
         # store the inputs
@@ -376,10 +379,12 @@ class LSTM_network:
         assert len(self.lstm_node_list) == len(target)
 
         loss = 0
+        # pdb.set_trace()
         for i, tt in enumerate(target):
             prob = self.lstm_node_list[i].state.prob
             loss += -np.log(prob[tt])
 
+        # pdb.set_trace()
         self.loss = loss
 
     def feed_forward(self, input_x, s_prev=None, h_prev=None):
